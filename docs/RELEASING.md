@@ -2,9 +2,10 @@
 
 The **Xcode - Release** GitHub Actions workflow builds a universal Release app
 for Apple Silicon (`arm64`) and Intel (`x86_64`), applies an ad hoc signature with
-the hardened runtime, and uploads a ZIP and compressed, read-only DMG, each with
-a SHA-256 checksum. It verifies both architectures and the code signature before
-packaging, and checks the disk image's integrity after creating it.
+the hardened runtime, and uploads a single compressed, read-only DMG directly,
+without a ZIP wrapper. It verifies both architectures and the code signature
+before packaging, checks the disk image's integrity, and records its SHA-256
+checksum in the workflow run summary.
 
 No paid Apple Developer Program membership, signing certificate, Apple account,
 or repository secrets are required. The app is **not notarized**, and its ad hoc
@@ -17,15 +18,15 @@ signature does not establish a verified developer identity.
    selecting the desired branch, or push a version tag such as `v1.0`.
 3. For a tag build, the tag must equal `v` followed by `MARKETING_VERSION`.
    The workflow uses its run number for `CFBundleVersion`.
-4. Download the `MCMagic-<version>-<run number>-macOS-universal-adhoc` artifact
-   from the successful workflow run. Extract the artifact wrapper to obtain
-   the DMG, app ZIP, and their `.sha256` files. Keep these packages intact for
-   distribution.
-5. Verify the checksum with `shasum -a 256 -c <package>.sha256` and test the app
-   on another Mac, including Accessibility permission, gestures, and reconnect.
+4. Download `MCMagic-<version>-<run number>-macOS-universal-adhoc.dmg` from
+   the successful workflow run's **Artifacts** section. This downloads the DMG
+   itself; there is no ZIP to extract or separate checksum file.
+5. Compare `shasum -a 256 <download>.dmg` with the checksum in the run summary,
+   then test the app on another Mac, including Accessibility permission,
+   gestures, and reconnect.
 
 Release artifacts are retained for 30 days. The workflow does not create or
-publish a GitHub Release; the packages can be attached to one after testing.
+publish a GitHub Release; the DMG can be attached to one after testing.
 
 ## Install from the DMG
 

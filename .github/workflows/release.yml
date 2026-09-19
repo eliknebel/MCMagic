@@ -14,7 +14,7 @@ defaults:
 
 jobs:
   release:
-    name: Build and package ad hoc-signed MCMagic
+    name: Build and package MCMagic
     runs-on: macos-15
     timeout-minutes: 20
     env:
@@ -59,21 +59,16 @@ jobs:
           fi
           echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: Ad hoc sign and package
+      - name: Ad hoc sign app
         run: |
           app="$RELEASE_DIR/products/Release/MCMagic.app"
           codesign --force --sign - --options runtime --timestamp=none "$app"
           codesign --verify --deep --strict --all-architectures --verbose=2 "$app"
-          mkdir -p "$RELEASE_DIR/dist"
-          cd "$RELEASE_DIR/dist"
-          archive="MCMagic-$RELEASE_VERSION-$GITHUB_RUN_NUMBER-macOS-universal-adhoc.zip"
-          ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
-          shasum -a 256 "$archive" > "$archive.sha256"
 
       - name: Create DMG
         run: |
           staging="$RELEASE_DIR/dmg-root"
-          mkdir -p "$staging"
+          mkdir -p "$staging" "$RELEASE_DIR/dist"
           ditto "$RELEASE_DIR/products/Release/MCMagic.app" "$staging/MCMagic.app"
           ln -s /Applications "$staging/Applications"
           cd "$RELEASE_DIR/dist"
@@ -81,13 +76,14 @@ jobs:
           hdiutil create -volname MCMagic -srcfolder "$staging" \
             -format UDZO -fs HFS+ "$image"
           hdiutil verify "$image"
-          shasum -a 256 "$image" > "$image.sha256"
+          echo "RELEASE_DMG=$RELEASE_DIR/dist/$image" >> "$GITHUB_ENV"
+          echo 'DMG SHA-256:' >> "$GITHUB_STEP_SUMMARY"
+          shasum -a 256 "$image" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload ad hoc-signed release
+      - name: Upload DMG
         uses: actions/upload-artifact@v7
         with:
-          name: MCMagic-${{ env.RELEASE_VERSION }}-${{ github.run_number }}-macOS-universal-adhoc
-          path: ${{ env.RELEASE_DIR }}/dist/*
+          path: ${{ env.RELEASE_DMG }}
+          archive: false
           if-no-files-found: error
-          compression-level: 0
           retention-days: 30
