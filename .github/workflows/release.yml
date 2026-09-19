@@ -14,9 +14,9 @@ defaults:
 
 jobs:
   release:
-    name: Sign, notarize, and package MCMagic
+    name: Build and package ad hoc-signed MCMagic
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
 
@@ -28,21 +28,6 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/mcmagic-release"
           echo "RELEASE_DIR=$RUNNER_TEMP/mcmagic-release" >> "$GITHUB_ENV"
-
-      - name: Validate signing configuration
-        env:
-          DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
-          DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          for name in DEVELOPER_ID_CERTIFICATE_BASE64 DEVELOPER_ID_CERTIFICATE_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
-            if [[ -z "${!name}" ]]; then
-              echo "::error::Missing repository secret: $name. See docs/RELEASING.md."
-              exit 1
-            fi
-          done
 
       - name: Run tests
         run: zsh Tests/run_tests.sh
@@ -74,108 +59,22 @@ jobs:
           fi
           echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: Import Developer ID certificate
-        env:
-          DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
-          DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
-        run: |
-          umask 077
-          keychain="$RUNNER_TEMP/mcmagic-signing.keychain-db"
-          certificate="$RUNNER_TEMP/mcmagic-signing.p12"
-          password=$(openssl rand -hex 32)
-          echo "::add-mask::$password"
-          printf '%s' "$DEVELOPER_ID_CERTIFICATE_BASE64" | base64 --decode > "$certificate"
-          security create-keychain -p "$password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$password" "$keychain"
-          security import "$certificate" -P "$DEVELOPER_ID_CERTIFICATE_PASSWORD" -t cert -f pkcs12 -k "$keychain" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -k "$password" "$keychain"
-          security list-keychains -d user -s "$keychain"
-          rm -f "$certificate"
-          identities=$(security find-identity -v -p codesigning "$keychain" | awk '/"Developer ID Application:/ {print $2}')
-          if [[ $(printf '%s\n' "$identities" | awk 'NF {count++} END {print count+0}') != 1 ]]; then
-            echo "::error::The P12 must contain exactly one valid Developer ID Application signing identity and its private key."
-            exit 1
-          fi
-          echo "SIGNING_IDENTITY=$identities" >> "$GITHUB_ENV"
-
-      - name: Sign app
-        env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Ad hoc sign and package
         run: |
           app="$RELEASE_DIR/products/Release/MCMagic.app"
-          codesign --force --sign "$SIGNING_IDENTITY" \
-            --keychain "$RUNNER_TEMP/mcmagic-signing.keychain-db" \
-            --options runtime --timestamp "$app"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          team=$(codesign -dv --verbose=4 "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')
-          if [[ "$team" != "$APPLE_TEAM_ID" ]]; then
-            echo "::error::The signing certificate does not belong to APPLE_TEAM_ID."
-            exit 1
-          fi
-
-      - name: Notarize app
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          ditto -c -k --sequesterRsrc --keepParent \
-            "$RELEASE_DIR/products/Release/MCMagic.app" "$RELEASE_DIR/submission.zip"
-          submit_status=0
-          xcrun notarytool submit "$RELEASE_DIR/submission.zip" \
-            --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" --wait --timeout 20m \
-            --output-format json > "$RELEASE_DIR/notarization.json" || submit_status=$?
-          submission_id=$(jq -r '.id // empty' "$RELEASE_DIR/notarization.json")
-          if [[ -n "$submission_id" ]]; then
-            xcrun notarytool log "$submission_id" \
-              --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" "$RELEASE_DIR/notarization-log.json" || true
-          fi
-          if [[ "$submit_status" != 0 || $(jq -r '.status' "$RELEASE_DIR/notarization.json") != Accepted ]]; then
-            if [[ -f "$RELEASE_DIR/notarization-log.json" ]]; then
-              cat "$RELEASE_DIR/notarization-log.json"
-            fi
-            echo "::error::Apple did not accept the notarization submission."
-            exit 1
-          fi
-
-      - name: Staple, verify, and package
-        run: |
-          app="$RELEASE_DIR/products/Release/MCMagic.app"
-          xcrun stapler staple "$app"
-          xcrun stapler validate "$app"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          spctl --assess --type execute --verbose=2 "$app"
+          codesign --force --sign - --options runtime --timestamp=none "$app"
+          codesign --verify --deep --strict --all-architectures --verbose=2 "$app"
           mkdir -p "$RELEASE_DIR/dist"
           cd "$RELEASE_DIR/dist"
-          archive="MCMagic-$RELEASE_VERSION-$GITHUB_RUN_NUMBER-macOS-universal.zip"
+          archive="MCMagic-$RELEASE_VERSION-$GITHUB_RUN_NUMBER-macOS-universal-adhoc.zip"
           ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
           shasum -a 256 "$archive" > "$archive.sha256"
 
-      - name: Upload signed release
+      - name: Upload ad hoc-signed release
         uses: actions/upload-artifact@v7
         with:
-          name: MCMagic-${{ env.RELEASE_VERSION }}-${{ github.run_number }}-macOS-universal
+          name: MCMagic-${{ env.RELEASE_VERSION }}-${{ github.run_number }}-macOS-universal-adhoc
           path: ${{ env.RELEASE_DIR }}/dist/*
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
-
-      - name: Upload notarization diagnostics
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: notarization-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.RELEASE_DIR }}/notarization*.json
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Clean up signing material
-        if: ${{ always() }}
-        run: |
-          if [[ -f "$RUNNER_TEMP/mcmagic-signing.keychain-db" ]]; then
-            security delete-keychain "$RUNNER_TEMP/mcmagic-signing.keychain-db"
-          fi
-          rm -f "$RUNNER_TEMP/mcmagic-signing.p12"
