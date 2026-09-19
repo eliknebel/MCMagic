@@ -63,13 +63,8 @@ static void magicMouseRemoved(void *context,
     };
     IOHIDManagerSetDeviceMatching(_manager, (__bridge CFDictionaryRef)matching);
 
-    IOReturn openResult = IOHIDManagerOpen(_manager, kIOHIDOptionsTypeNone);
-    if (openResult != kIOReturnSuccess) {
-        CFRelease(_manager);
-        _manager = NULL;
-        return;
-    }
-
+    // Device enumeration and connection callbacks do not require opening devices
+    // for input access. Keep this observer independent of Input Monitoring.
     CFSetRef currentDevices = IOHIDManagerCopyDevices(_manager);
     if (currentDevices != NULL) {
         for (id deviceValue in (__bridge NSSet *)currentDevices) {
@@ -100,7 +95,6 @@ static void magicMouseRemoved(void *context,
     IOHIDManagerUnscheduleFromRunLoop(_manager, CFRunLoopGetMain(), kCFRunLoopCommonModes);
     IOHIDManagerRegisterDeviceMatchingCallback(_manager, NULL, NULL);
     IOHIDManagerRegisterDeviceRemovalCallback(_manager, NULL, NULL);
-    IOHIDManagerClose(_manager, kIOHIDOptionsTypeNone);
     CFRelease(_manager);
     _manager = NULL;
     [_knownMagicMouseIDs removeAllObjects];

@@ -1,7 +1,6 @@
 import AppKit
 import ApplicationServices
 import Combine
-import CoreGraphics
 import Foundation
 
 enum SwipeDirectionPreference: String, CaseIterable, Identifiable {
@@ -120,7 +119,6 @@ final class AppModel: ObservableObject {
         if requestPermission {
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
             _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
-            _ = CGRequestListenEventAccess()
         }
 
         attemptStart()
