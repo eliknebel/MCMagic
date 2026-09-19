@@ -2,8 +2,9 @@
 
 The **Xcode - Release** GitHub Actions workflow builds a universal Release app
 for Apple Silicon (`arm64`) and Intel (`x86_64`), applies an ad hoc signature with
-the hardened runtime, and uploads an app ZIP and SHA-256 checksum. It verifies
-both architectures and the code signature before packaging.
+the hardened runtime, and uploads a ZIP and compressed, read-only DMG, each with
+a SHA-256 checksum. It verifies both architectures and the code signature before
+packaging, and checks the disk image's integrity after creating it.
 
 No paid Apple Developer Program membership, signing certificate, Apple account,
 or repository secrets are required. The app is **not notarized**, and its ad hoc
@@ -18,12 +19,19 @@ signature does not establish a verified developer identity.
    The workflow uses its run number for `CFBundleVersion`.
 4. Download the `MCMagic-<version>-<run number>-macOS-universal-adhoc` artifact
    from the successful workflow run. Extract the artifact wrapper to obtain
-   the app ZIP and its `.sha256` file. Keep the inner ZIP intact for distribution.
-5. Verify the checksum with `shasum -a 256 -c <archive>.sha256` and test the app
+   the DMG, app ZIP, and their `.sha256` files. Keep these packages intact for
+   distribution.
+5. Verify the checksum with `shasum -a 256 -c <package>.sha256` and test the app
    on another Mac, including Accessibility permission, gestures, and reconnect.
 
 Release artifacts are retained for 30 days. The workflow does not create or
-publish a GitHub Release; the ZIP can be attached to one after testing.
+publish a GitHub Release; the packages can be attached to one after testing.
+
+## Install from the DMG
+
+Open the DMG and drag **MCMagic.app** onto the **Applications** shortcut. Eject
+the disk image, then launch MCMagic from Applications. The DMG is a container
+for the ad hoc-signed app; it does not add Developer ID signing or notarization.
 
 ## Opening the downloaded app
 

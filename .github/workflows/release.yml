@@ -70,6 +70,19 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
           shasum -a 256 "$archive" > "$archive.sha256"
 
+      - name: Create DMG
+        run: |
+          staging="$RELEASE_DIR/dmg-root"
+          mkdir -p "$staging"
+          ditto "$RELEASE_DIR/products/Release/MCMagic.app" "$staging/MCMagic.app"
+          ln -s /Applications "$staging/Applications"
+          cd "$RELEASE_DIR/dist"
+          image="MCMagic-$RELEASE_VERSION-$GITHUB_RUN_NUMBER-macOS-universal-adhoc.dmg"
+          hdiutil create -volname MCMagic -srcfolder "$staging" \
+            -format UDZO -fs HFS+ "$image"
+          hdiutil verify "$image"
+          shasum -a 256 "$image" > "$image.sha256"
+
       - name: Upload ad hoc-signed release
         uses: actions/upload-artifact@v7
         with:
