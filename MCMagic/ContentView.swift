@@ -45,6 +45,11 @@ struct PreferencesView: View {
             }
             .pickerStyle(.menu)
             .disabled(!model.isEnabled)
+
+            Toggle("Select hovered window when dismissing", isOn: $model.selectHoveredWindowOnDismiss)
+                .toggleStyle(.checkbox)
+                .disabled(!model.isEnabled)
+                .help("When unchecked, dismissal returns to the previously active window.")
         }
         .padding(24)
         .frame(width: 420)

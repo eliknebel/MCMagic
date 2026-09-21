@@ -35,6 +35,7 @@ final class AppModel: ObservableObject {
         static let isEnabled = "isEnabled"
         static let activateSwipeDirection = "activateSwipeDirection"
         static let dismissSwipeDirection = "dismissSwipeDirection"
+        static let selectHoveredWindowOnDismiss = "selectHoveredWindowOnDismiss"
     }
 
     @Published var isEnabled: Bool {
@@ -65,6 +66,16 @@ final class AppModel: ObservableObject {
         }
     }
 
+    @Published var selectHoveredWindowOnDismiss: Bool {
+        didSet {
+            UserDefaults.standard.set(
+                selectHoveredWindowOnDismiss,
+                forKey: DefaultsKey.selectHoveredWindowOnDismiss
+            )
+            GestureMonitor.shared.selectHoveredWindowOnDismiss = selectHoveredWindowOnDismiss
+        }
+    }
+
     private var hasStarted = false
     private var retryTimer: Timer?
     private var recoveryWorkItem: DispatchWorkItem?
@@ -81,6 +92,14 @@ final class AppModel: ObservableObject {
             rawValue: UserDefaults.standard.string(forKey: DefaultsKey.dismissSwipeDirection) ?? ""
         ) ?? .down
 
+        if UserDefaults.standard.object(forKey: DefaultsKey.selectHoveredWindowOnDismiss) == nil {
+            selectHoveredWindowOnDismiss = true
+        } else {
+            selectHoveredWindowOnDismiss = UserDefaults.standard.bool(
+                forKey: DefaultsKey.selectHoveredWindowOnDismiss
+            )
+        }
+
         if UserDefaults.standard.object(forKey: DefaultsKey.isEnabled) == nil {
             isEnabled = true
         } else {
@@ -94,6 +113,7 @@ final class AppModel: ObservableObject {
         startLifecycleMonitoring()
         GestureMonitor.shared.activationDirection = activateSwipeDirection.monitorValue
         GestureMonitor.shared.dismissalDirection = dismissSwipeDirection.monitorValue
+        GestureMonitor.shared.selectHoveredWindowOnDismiss = selectHoveredWindowOnDismiss
         applyEnabledState(requestPermission: isEnabled)
     }
 

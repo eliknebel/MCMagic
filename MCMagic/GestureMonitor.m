@@ -59,6 +59,8 @@ static NSString *const GestureMonitorErrorDomain = @"com.bitbldr.MCMagic.Gesture
 - (BOOL)shouldSuppressScrollEvent:(CGEventRef)event;
 - (void)activateMissionControl;
 - (void)dismissMissionControl;
+- (void)toggleMissionControl;
+- (void)postKey:(CGKeyCode)keyCode flags:(CGEventFlags)flags;
 - (void)reenableEventTap;
 - (void)releaseDevices;
 - (void)closeFramework;
@@ -96,6 +98,7 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy,
         _swipeState = SwipeStateIdle;
         _activationDirection = MCMagicDirectionPreferenceUp;
         _dismissalDirection = MCMagicDirectionPreferenceDown;
+        _selectHoveredWindowOnDismiss = YES;
     }
     return self;
 }
@@ -450,7 +453,7 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy,
     return shouldSuppress;
 }
 
-static void postKey(CGKeyCode keyCode, CGEventFlags flags) {
+- (void)postKey:(CGKeyCode)keyCode flags:(CGEventFlags)flags {
     CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
     CGEventRef keyDown = CGEventCreateKeyboardEvent(source, keyCode, true);
     CGEventRef keyUp = CGEventCreateKeyboardEvent(source, keyCode, false);
@@ -472,6 +475,10 @@ static void postKey(CGKeyCode keyCode, CGEventFlags flags) {
 }
 
 - (void)activateMissionControl {
+    [self toggleMissionControl];
+}
+
+- (void)toggleMissionControl {
     CoreDockSendNotificationFunction sendDockNotification = dlsym(
         RTLD_DEFAULT,
         "CoreDockSendNotification"
@@ -482,12 +489,23 @@ static void postKey(CGKeyCode keyCode, CGEventFlags flags) {
     }
 
     // Fallback to the default Mission Control shortcut (Control-Up Arrow).
-    postKey((CGKeyCode)126, kCGEventFlagMaskControl);
+    [self postKey:(CGKeyCode)126 flags:kCGEventFlagMaskControl];
 }
 
 - (void)dismissMissionControl {
-    // Escape has dismissal-only semantics, unlike toggling Mission Control.
-    postKey((CGKeyCode)53, 0);
+    // This runs asynchronously after recognition. A click or native gesture
+    // may already have closed Mission Control; do not toggle it back open.
+    if (!self.isRunning || !MCMagicIsMissionControlActive()) {
+        return;
+    }
+
+    if (self.selectHoveredWindowOnDismiss) {
+        // Let the Dock commit its hovered window selection when leaving Mission
+        // Control, just as the native gesture does. Escape cancels that selection.
+        [self toggleMissionControl];
+    } else {
+        [self postKey:(CGKeyCode)53 flags:0];
+    }
 }
 
 - (void)reenableEventTap {

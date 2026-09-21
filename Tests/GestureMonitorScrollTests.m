@@ -12,6 +12,8 @@
 - (BOOL)shouldSuppressScrollEvent:(CGEventRef)event;
 - (void)activateMissionControl;
 - (void)dismissMissionControl;
+- (void)toggleMissionControl;
+- (void)postKey:(CGKeyCode)keyCode flags:(CGEventFlags)flags;
 @end
 
 @interface TestGestureMonitor : GestureMonitor
@@ -20,6 +22,24 @@
 @implementation TestGestureMonitor
 - (void)activateMissionControl {}
 - (void)dismissMissionControl {}
+@end
+
+// Run the real activation/dismissal methods, recording their external effects.
+// In particular, the old Escape path must never send input to the test desktop.
+@interface TestMissionControlActions : GestureMonitor
+@property(nonatomic) NSUInteger toggleCount;
+@property(nonatomic) NSUInteger keyCount;
+@property(nonatomic) CGKeyCode lastKeyCode;
+@property(nonatomic) CGEventFlags lastKeyFlags;
+@end
+
+@implementation TestMissionControlActions
+- (void)toggleMissionControl { self.toggleCount++; }
+- (void)postKey:(CGKeyCode)keyCode flags:(CGEventFlags)flags {
+    self.keyCount++;
+    self.lastKeyCode = keyCode;
+    self.lastKeyFlags = flags;
+}
 @end
 
 static BOOL missionControlActive = YES;
@@ -76,8 +96,38 @@ static void BeginDismissal(GestureMonitor *monitor) {
                  @"recognized dismissal consumes direct scrolling");
 }
 
+static void AssertDismissal(BOOL active, BOOL running, BOOL selectHoveredWindow,
+                            NSUInteger expectedToggles, NSUInteger expectedKeys,
+                            NSString *scenario) {
+    TestMissionControlActions *monitor = [[TestMissionControlActions alloc] init];
+    [monitor setValue:@(running) forKey:@"running"];
+    monitor.selectHoveredWindowOnDismiss = selectHoveredWindow;
+    missionControlActive = active;
+    [monitor dismissMissionControl];
+    if (monitor.toggleCount != expectedToggles || monitor.keyCount != expectedKeys
+        || (expectedKeys > 0 && (monitor.lastKeyCode != 53 || monitor.lastKeyFlags != 0))) {
+        NSLog(@"FAIL: %@ (toggles: %lu, direct key events: %lu)", scenario,
+              (unsigned long)monitor.toggleCount, (unsigned long)monitor.keyCount);
+        failures++;
+    }
+    [monitor stop];
+}
+
 int main(void) {
     @autoreleasepool {
+        AssertDismissal(YES, YES, YES, 1, 0,
+                        @"dismissal uses native selection-preserving toggle instead of Escape");
+        AssertDismissal(NO, YES, YES, 0, 0,
+                        @"Mission Control closed before queued dismissal must not reopen");
+        AssertDismissal(YES, NO, YES, 0, 0,
+                        @"stopped monitoring must discard queued dismissal");
+        AssertDismissal(YES, YES, NO, 0, 1,
+                        @"unchecked preference dismisses with Escape and preserves the previous window");
+        AssertDismissal(NO, YES, NO, 0, 0,
+                        @"unchecked preference must not send Escape to an ordinary app");
+        AssertDismissal(YES, NO, NO, 0, 0,
+                        @"stopped monitoring must not send Escape");
+
         GestureMonitor *monitor = NewMonitor();
         BeginDismissal(monitor);
         Touches(monitor, 0, 0, 0, 1.2);

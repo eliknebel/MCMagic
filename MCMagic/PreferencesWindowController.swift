@@ -10,7 +10,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         let window = NSWindow(contentViewController: hostingController)
         window.title = "MCMagic Preferences"
         window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: 420, height: 230))
+        window.setContentSize(NSSize(width: 420, height: 275))
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)

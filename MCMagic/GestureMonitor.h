@@ -12,6 +12,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (atomic, readonly, getter=isRunning) BOOL running;
 @property (atomic) MCMagicDirectionPreference activationDirection;
 @property (atomic) MCMagicDirectionPreference dismissalDirection;
+@property (atomic) BOOL selectHoveredWindowOnDismiss;
 
 - (BOOL)startWithError:(NSError * _Nullable * _Nullable)error;
 - (void)stop;
