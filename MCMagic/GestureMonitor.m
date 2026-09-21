@@ -1,4 +1,5 @@
 #import "GestureMonitor.h"
+#import "MultitouchTypes.h"
 #import "MissionControlDetector.h"
 #import "SwipeGestureClassifier.h"
 #import "SwipeGestureRouter.h"
@@ -10,40 +11,6 @@
 #import <IOKit/hid/IOHIDDeviceKeys.h>
 #import <dlfcn.h>
 #import <os/lock.h>
-
-typedef const void *MTDeviceRef;
-
-typedef struct {
-    float x;
-    float y;
-} MTPoint;
-
-typedef struct {
-    MTPoint position;
-    MTPoint velocity;
-} MTVector;
-
-// Reverse-engineered layout used by MultitouchSupport.framework on modern macOS.
-typedef struct {
-    int32_t frame;
-    double timestamp;
-    int32_t pathIndex;
-    uint32_t state;
-    int32_t fingerID;
-    int32_t handID;
-    MTVector normalizedVector;
-    float zTotal;
-    int32_t reserved9;
-    float angle;
-    float majorAxis;
-    float minorAxis;
-    MTVector absoluteVector;
-    int32_t reserved14;
-    int32_t reserved15;
-    float zDensity;
-} MTTouch;
-
-_Static_assert(sizeof(MTTouch) == 96, "Unexpected MTTouch ABI");
 
 typedef void (*MTFrameCallback)(MTDeviceRef, MTTouch *, size_t, double, size_t, void *);
 typedef CFArrayRef (*MTDeviceCreateListFunction)(void);
@@ -64,7 +31,6 @@ typedef NS_ENUM(uint8_t, SwipeState) {
 };
 
 static NSString *const GestureMonitorErrorDomain = @"com.bitbldr.MCMagic.GestureMonitor";
-static const NSTimeInterval MomentumSuppressionDuration = 0.70;
 
 @interface GestureMonitor () {
     void *_multitouchFramework;
@@ -80,7 +46,8 @@ static const NSTimeInterval MomentumSuppressionDuration = 0.70;
     float _originX;
     float _originY;
     double _gestureStartTime;
-    double _suppressUntil;
+    BOOL _suppressScrollSequence;
+    BOOL _suppressMomentum;
     BOOL _running;
 }
 
@@ -89,7 +56,7 @@ static const NSTimeInterval MomentumSuppressionDuration = 0.70;
          getDimensions:(MTDeviceDimensionsFunction)getDimensions
              getService:(MTDeviceGetServiceFunction)getService;
 - (void)handleTouches:(MTTouch *)touches count:(size_t)touchCount timestamp:(double)timestamp;
-- (BOOL)shouldSuppressScroll;
+- (BOOL)shouldSuppressScrollEvent:(CGEventRef)event;
 - (void)activateMissionControl;
 - (void)dismissMissionControl;
 - (void)reenableEventTap;
@@ -234,7 +201,8 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy,
 
     os_unfair_lock_lock(&_stateLock);
     _swipeState = SwipeStateIdle;
-    _suppressUntil = 0;
+    _suppressScrollSequence = NO;
+    _suppressMomentum = NO;
     _running = YES;
     os_unfair_lock_unlock(&_stateLock);
     return YES;
@@ -246,7 +214,8 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy,
     os_unfair_lock_lock(&_stateLock);
     _running = NO;
     _swipeState = SwipeStateIdle;
-    _suppressUntil = 0;
+    _suppressScrollSequence = NO;
+    _suppressMomentum = NO;
     os_unfair_lock_unlock(&_stateLock);
 
     for (NSValue *deviceValue in _devices) {
@@ -339,7 +308,6 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy,
 
     BOOL shouldRouteGesture = NO;
     MCMagicGestureDirection gestureDirection = MCMagicGestureDirectionUndetermined;
-    double clockTime = CFAbsoluteTimeGetCurrent();
 
     os_unfair_lock_lock(&_stateLock);
     if (!_running) {
@@ -348,16 +316,16 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy,
     }
 
     if (activeCount == 0) {
-        if (_swipeState == SwipeStateTriggered) {
-            _suppressUntil = clockTime + MomentumSuppressionDuration;
-        }
+        // Native scroll-end and momentum events can arrive after the touch lift.
+        // Leave their suppression armed until the event stream ends or restarts.
         _swipeState = SwipeStateIdle;
         os_unfair_lock_unlock(&_stateLock);
         return;
     }
 
     if (activeCount != 2) {
-        if (_swipeState == SwipeStateCandidate || _swipeState == SwipeStateTriggered) {
+        // A recognized gesture remains consumed until every finger lifts.
+        if (_swipeState == SwipeStateCandidate) {
             _swipeState = SwipeStateRejected;
         }
         os_unfair_lock_unlock(&_stateLock);
@@ -408,7 +376,8 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy,
                 _swipeState = SwipeStateRejected;
             } else {
                 _swipeState = SwipeStateTriggered;
-                _suppressUntil = CFAbsoluteTimeGetCurrent() + MomentumSuppressionDuration;
+                _suppressScrollSequence = YES;
+                _suppressMomentum = YES;
                 shouldPerformAction = action == MCMagicGestureActionActivateMissionControl
                     || action == MCMagicGestureActionDismissMissionControl;
             }
@@ -427,13 +396,56 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy,
     }
 }
 
-- (BOOL)shouldSuppressScroll {
-    double now = CFAbsoluteTimeGetCurrent();
+- (BOOL)shouldSuppressScrollEvent:(CGEventRef)event {
+    int64_t phase = CGEventGetIntegerValueField(event, kCGScrollWheelEventScrollPhase);
+    int64_t momentum = CGEventGetIntegerValueField(event, kCGScrollWheelEventMomentumPhase);
+    BOOL continuous = CGEventGetIntegerValueField(event, kCGScrollWheelEventIsContinuous) != 0;
+
     os_unfair_lock_lock(&_stateLock);
-    BOOL shouldSuppress = _running
-        && (_swipeState == SwipeStateCandidate
-            || _swipeState == SwipeStateTriggered
-            || now < _suppressUntil);
+    if (!_running) {
+        os_unfair_lock_unlock(&_stateLock);
+        return NO;
+    }
+
+    if (momentum != kCGMomentumScrollPhaseNone) {
+        BOOL shouldSuppress = _suppressMomentum;
+        // CGMomentumScrollPhase is an enum, not the NSEvent phase bitmask.
+        if (momentum == kCGMomentumScrollPhaseEnd) {
+            _suppressMomentum = NO;
+            _suppressScrollSequence = NO;
+        }
+        os_unfair_lock_unlock(&_stateLock);
+        return shouldSuppress;
+    }
+
+    // A discrete wheel on another mouse is independent of the touch gesture.
+    if (!continuous && phase == 0) {
+        os_unfair_lock_unlock(&_stateLock);
+        return NO;
+    }
+
+    if ((phase & (kCGScrollPhaseBegan | kCGScrollPhaseMayBegin)) != 0
+        && _swipeState != SwipeStateTriggered) {
+        // Fresh physical scrolling supersedes old momentum, even if its final
+        // event was missing. Touch contact alone must not release queued inertia.
+        _suppressScrollSequence = NO;
+        _suppressMomentum = NO;
+    }
+    if (_swipeState == SwipeStateTriggered) {
+        _suppressScrollSequence = YES;
+        _suppressMomentum = YES;
+    }
+
+    BOOL shouldSuppress = _swipeState == SwipeStateCandidate
+        || _swipeState == SwipeStateTriggered
+        || (_suppressScrollSequence && phase != 0);
+    if ((phase & kCGScrollPhaseCancelled) != 0) {
+        _suppressScrollSequence = NO;
+        _suppressMomentum = NO;
+    } else if ((phase & kCGScrollPhaseEnded) != 0) {
+        // Finger scrolling ended, but its momentum may not have started yet.
+        _suppressScrollSequence = NO;
+    }
     os_unfair_lock_unlock(&_stateLock);
     return shouldSuppress;
 }
@@ -531,7 +543,7 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy,
         return event;
     }
 
-    if (type == kCGEventScrollWheel && [monitor shouldSuppressScroll]) {
+    if (type == kCGEventScrollWheel && [monitor shouldSuppressScrollEvent:event]) {
         return NULL;
     }
     return event;

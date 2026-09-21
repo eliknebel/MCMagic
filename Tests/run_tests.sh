@@ -49,3 +49,19 @@ xcrun clang \
     -o "$TEST_BUILD_DIR/LifecycleRecoveryTests"
 
 "$TEST_BUILD_DIR/LifecycleRecoveryTests"
+
+xcrun clang \
+    -fobjc-arc \
+    -framework Foundation \
+    -framework AppKit \
+    -framework ApplicationServices \
+    -framework CoreGraphics \
+    -framework IOKit \
+    -I "$PROJECT_DIR/MCMagic" \
+    "$PROJECT_DIR/MCMagic/GestureMonitor.m" \
+    "$PROJECT_DIR/MCMagic/SwipeGestureClassifier.m" \
+    "$PROJECT_DIR/MCMagic/SwipeGestureRouter.m" \
+    "$SCRIPT_DIR/GestureMonitorScrollTests.m" \
+    -o "$TEST_BUILD_DIR/GestureMonitorScrollTests"
+
+"$TEST_BUILD_DIR/GestureMonitorScrollTests"
