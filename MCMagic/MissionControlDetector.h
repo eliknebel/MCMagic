@@ -8,8 +8,8 @@ FOUNDATION_EXPORT BOOL MCMagicWindowListIndicatesMissionControl(
     NSArray<NSDictionary<NSString *, id> *> *windows
 );
 
-/// Evaluates the accessibility identifiers exposed by the Dock. Mission
-/// Control contributes a child whose identifier is "mc" while it is visible.
+/// Evaluates the accessibility identifiers exposed by the Dock ("mc") or
+/// WindowManager ("mc.display") while Mission Control is visible.
 FOUNDATION_EXPORT BOOL MCMagicAccessibilityIdentifiersIndicateMissionControl(
     NSArray<NSString *> *identifiers
 );

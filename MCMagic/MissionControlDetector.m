@@ -10,30 +10,31 @@ static const NSInteger DockBarMaximumLayer = 18;
 BOOL MCMagicAccessibilityIdentifiersIndicateMissionControl(
     NSArray<NSString *> *identifiers
 ) {
-    return [identifiers containsObject:@"mc"];
+    return [identifiers containsObject:@"mc"]
+        || [identifiers containsObject:@"mc.display"];
 }
 
-static BOOL MCMagicTryAccessibilityDetection(BOOL *detectionAvailable) {
+static BOOL MCMagicTryAccessibilityDetection(NSString *bundleIdentifier, BOOL *detectionAvailable) {
     *detectionAvailable = NO;
 
-    NSRunningApplication *dock = [NSRunningApplication
-        runningApplicationsWithBundleIdentifier:@"com.apple.dock"].firstObject;
-    if (dock == nil) {
+    NSRunningApplication *application = [NSRunningApplication
+        runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject;
+    if (application == nil) {
         return NO;
     }
 
-    AXUIElementRef dockElement = AXUIElementCreateApplication(dock.processIdentifier);
-    if (dockElement == NULL) {
+    AXUIElementRef applicationElement = AXUIElementCreateApplication(application.processIdentifier);
+    if (applicationElement == NULL) {
         return NO;
     }
 
     CFTypeRef childrenValue = NULL;
     AXError childrenError = AXUIElementCopyAttributeValue(
-        dockElement,
+        applicationElement,
         kAXChildrenAttribute,
         &childrenValue
     );
-    CFRelease(dockElement);
+    CFRelease(applicationElement);
 
     if (childrenError != kAXErrorSuccess
         || childrenValue == NULL
@@ -98,15 +99,21 @@ BOOL MCMagicWindowListIndicatesMissionControl(
 
 BOOL MCMagicIsMissionControlActive(void) {
     BOOL accessibilityDetectionAvailable = NO;
-    BOOL accessibilityDetection = MCMagicTryAccessibilityDetection(
-        &accessibilityDetectionAvailable
-    );
+    // Newer macOS versions expose Mission Control through WindowManager rather
+    // than the Dock. A readable Dock without "mc" must not hide that result.
+    for (NSString *bundleIdentifier in @[@"com.apple.dock", @"com.apple.WindowManager"]) {
+        BOOL available = NO;
+        if (MCMagicTryAccessibilityDetection(bundleIdentifier, &available)) {
+            return YES;
+        }
+        accessibilityDetectionAvailable |= available;
+    }
     if (accessibilityDetectionAvailable) {
-        return accessibilityDetection;
+        return NO;
     }
 
     // Retain the window-list heuristic as a fallback when Accessibility is
-    // unavailable or the Dock's accessibility tree cannot be queried.
+    // unavailable or neither host's accessibility tree can be queried.
     CFArrayRef windowInfo = CGWindowListCopyWindowInfo(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
         kCGNullWindowID
